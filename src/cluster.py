@@ -81,11 +81,11 @@ class MeanShift(ABC):
                 if torch.unique(cluster_labels[component_seeds]).shape[0] > 1:
                     temp = cluster_labels[component_seeds]
                     temp = temp[temp != -1]
-                    label = torch.mode(temp)[0]
+                    label = torch.mode(temp)[0].to(Z.device)
                 else:
-                    label = torch.tensor(K)
+                    label = torch.tensor(K).to(Z.device)
                     K += 1 # Increment number of clusters
-                cluster_labels[component_seeds] = label.cpu()
+                cluster_labels[component_seeds] = label
 
         return cluster_labels
         # return torch.from_numpy(cluster_labels)
