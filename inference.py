@@ -66,85 +66,58 @@ uois_net_3d = segmentation.UOISNet3D(uois3d_config,
                                     )
 
 dataset = "../dataset"
-video = "0026"
-video_folder = os.path.join(dataset, video)
-color_folder = os.path.join(video_folder, 'color')
-prefix_list = sorted([i.split('-')[0] for i in os.listdir(color_folder)])
-depth_trunc = 2.5
+videos = [f"{idx:04d}" for idx in [20, 21, 28, 29, 35]]
+print(videos)
 
-with open(os.path.join(video_folder, "config.json")) as f:
-    data_cfg = json.load(f)
-cam_intr = np.asarray(data_cfg['cam_intr'])
+for video in videos:
+    video_folder = os.path.join(dataset, video)
+    color_folder = os.path.join(video_folder, 'color')
+    prefix_list = sorted([i.split('-')[0] for i in os.listdir(color_folder)])
+    depth_trunc = 2.0
 
-# output folder for saliency and segmentation prediction
-sal_pred_folder = os.path.join(dataset, video, "predictions", "uois", "sal_pred")
-seg_pred_folder = os.path.join(dataset, video, "predictions", "uois", "seg_pred")
-# visualization_folder = os.path.join(dataset, video, "predictions", "uois", "vis")
-os.makedirs(sal_pred_folder, exist_ok=True)
-os.makedirs(seg_pred_folder, exist_ok=True)
-# os.makedirs(visualization_folder, exist_ok=True)
+    with open(os.path.join(video_folder, "config.json")) as f:
+        data_cfg = json.load(f)
+    cam_intr = np.asarray(data_cfg['cam_intr'])
 
-for i, prefix in tenumerate(prefix_list):
-    color_im_path = os.path.join(video_folder, 'color', prefix_list[i] + '-color.png')
-    depth_im_path = os.path.join(video_folder, 'depth', prefix_list[i] + '-depth.png')
-    color_im = cv2.cvtColor(cv2.imread(color_im_path), cv2.COLOR_BGR2RGB)
-    depth_im = cv2.imread(depth_im_path, cv2.IMREAD_UNCHANGED).astype(np.float32) / data_cfg['depth_scale']
-    depth_im[depth_im > depth_trunc] = 0
-    im_h, im_w = depth_im.shape
+    # output folder for saliency and segmentation prediction
+    sal_pred_folder = os.path.join(dataset, video, "predictions", "uois", "sal_pred")
+    seg_pred_folder = os.path.join(dataset, video, "predictions", "uois", "seg_pred")
+    os.makedirs(sal_pred_folder, exist_ok=True)
+    os.makedirs(seg_pred_folder, exist_ok=True)
 
-    cam_params = {
-        'fx': cam_intr[0, 0],
-        'fy': cam_intr[1, 1],
-        'x_offset': cam_intr[0, 2],
-        'y_offset': cam_intr[1, 2],
-        'img_height': im_h,
-        'img_width': im_w
-    }
-    xyz = util_.compute_xyz(depth_im, cam_params)   # XYZ is in left-handed coordinate system!
-    rgb = data_augmentation.standardize_image(color_im)  # (H, W, 3)
+    for i, prefix in tenumerate(prefix_list):
+        color_im_path = os.path.join(video_folder, 'color', prefix_list[i] + '-color.png')
+        depth_im_path = os.path.join(video_folder, 'depth', prefix_list[i] + '-depth.png')
+        color_im = cv2.cvtColor(cv2.imread(color_im_path), cv2.COLOR_BGR2RGB)
+        depth_im = cv2.imread(depth_im_path, cv2.IMREAD_UNCHANGED).astype(np.float32) / data_cfg['depth_scale']
+        depth_im[depth_im > depth_trunc] = 0
+        im_h, im_w = depth_im.shape
 
-    batch = {
-        'rgb': data_augmentation.array_to_tensor(rgb).unsqueeze(0),
-        'xyz': data_augmentation.array_to_tensor(xyz).unsqueeze(0)
-    }
+        cam_params = {
+            'fx': cam_intr[0, 0],
+            'fy': cam_intr[1, 1],
+            'x_offset': cam_intr[0, 2],
+            'y_offset': cam_intr[1, 2],
+            'img_height': im_h,
+            'img_width': im_w
+        }
+        xyz = util_.compute_xyz(depth_im, cam_params)   # XYZ is in left-handed coordinate system!
+        rgb = data_augmentation.standardize_image(color_im)  # (H, W, 3)
 
-    fg_masks, center_offsets, initial_masks, seg_masks = uois_net_3d.run_on_batch(batch)
+        batch = {
+            'rgb': data_augmentation.array_to_tensor(rgb).unsqueeze(0),
+            'xyz': data_augmentation.array_to_tensor(xyz).unsqueeze(0)
+        }
 
-    # init_mask_path = os.path.join(video_folder, 'init_masks', f"{prefix}.png")
-    # init_mask = cv2.imread(init_mask_path, cv2.IMREAD_UNCHANGED)
-    # initial_masks = torch.from_numpy(init_mask).to(uois_net_3d.device).to(torch.int64).unsqueeze(0)
-    # # initial_masks[initial_masks != 0] = 2
-    # seg_masks = uois_net_3d.refine_with_RRN(batch, initial_masks)
+        fg_masks, center_offsets, initial_masks, seg_masks = uois_net_3d.run_on_batch(batch)
 
-    # saliency prediction
-    fg_mask = fg_masks[0].cpu().numpy()  # label = 0: background, 1: table, 2: foreground
-    fg_mask[fg_mask == 1] = 0  # merge table into background
-    fg_mask[fg_mask == 2] = 1  # change foreground label to 1
-    cv2.imwrite(os.path.join(sal_pred_folder, f"{prefix}.png"), fg_mask.astype(np.uint16))
+        # saliency prediction
+        fg_mask = fg_masks[0].cpu().numpy()  # label = 0: background, 1: table, 2: foreground
+        fg_mask[fg_mask == 1] = 0  # merge table into background
+        fg_mask[fg_mask == 2] = 1  # change foreground label to 1
+        cv2.imwrite(os.path.join(sal_pred_folder, f"{prefix}.png"), fg_mask.astype(np.uint16))
 
-    seg_mask = seg_masks[0].cpu().numpy()
-    cv2.imwrite(os.path.join(seg_pred_folder, f"{prefix}.png"), seg_mask.astype(np.uint16))
-        
-    """
-    # initial_mask = initial_masks[0].cpu().numpy()
-    num_objs = max(np.unique(seg_mask).max(), np.unique(initial_mask).max()) + 1
-    fg_mask_plot = util_.get_color_mask(fg_mask, nc=num_objs)
-    init_mask_plot = util_.get_color_mask(initial_mask, nc=num_objs)
-    seg_mask_plot = util_.get_color_mask(seg_mask, nc=num_objs)
-
-    color_im_bgr = cv2.cvtColor(color_im, cv2.COLOR_RGB2BGR)
-    depth_im_gray = (np.stack([depth_im, depth_im, depth_im]) / depth_trunc * 150).astype(np.uint8).transpose(1, 2, 0)
-
-    combined_obs = np.hstack([color_im_bgr, depth_im_gray])
-    combined_res = np.hstack([fg_mask_plot, seg_mask_plot])
-    combined_img = np.vstack([combined_obs, combined_res])
-
-    cv2.imshow("masks", combined_img)
-    key = cv2.waitKey(1)
-    if key == ord('q'):
-        break
-
-    cv2.imwrite(os.path.join(visualization_folder, f"{prefix}.png"), combined_img)
-    """
-
-cv2.destroyAllWindows()
+        seg_mask = seg_masks[0].cpu().numpy()
+        cv2.imwrite(os.path.join(seg_pred_folder, f"{prefix}.png"), seg_mask.astype(np.uint16))
+            
+    cv2.destroyAllWindows()
